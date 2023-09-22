@@ -3,7 +3,8 @@ import sqlite3
 import bs4
 import re
 
-ignoreWordList = []
+ignoreWordList = ["и", "а", "но", "однако", "или", "что", "чтобы", "да", "также", "словно",
+                  "будто", "тоже", "как", "зато", "либо", "ибо", "хотя", "пусть", "пускай", "точно"]
 
 
 class Crawler:
@@ -19,12 +20,8 @@ class Crawler:
 
     # 0. Деструктор
     def __del__(self):
-        print("0.Деструктор")
         # Закрытие соединения с БД
         self.connection.close()
-        print("БД закрыта")
-
-        print("------------------------------------")
 
     # 1. Индексирование одной страницы
     def addIndex(self, soup, url):
@@ -61,7 +58,7 @@ class Crawler:
     # 2. Получение текста страницы
     def getTextOnly(self, soup):
         # Преобразование супа к строке
-        soupText = soup.text
+        soupText = soup.get_text()
         # Если преобразование не удалось
         if soupText == None:
             # Разбиение разметки на части
@@ -73,7 +70,8 @@ class Crawler:
                 resultText += subText+'\n'
             return resultText
         else:
-            return soupText
+            # Устранение
+            return soupText.strip()
 
     # 3. Разбиение текста на слова
     def separateWords(self, text):
@@ -82,6 +80,7 @@ class Crawler:
         return [s.lower() for s in splitter.split(text) if s != '']
 
     # 4. Проиндексирован ли URL (проверка наличия URL в БД)
+
     def isIndexed(self, url):
         # Поиск в таблице записи с этим url
         sqlSelect = "SELECT rowid FROM urllist WHERE url= '{}';".format(url)
@@ -126,25 +125,26 @@ class Crawler:
                 self.cursor.execute(sqlInsert)
 
     # 6. Паук
-    def crawl(self, urlList, depth=1):
+    def crawl(self, urlList, depth=2):
         print("6. Обход страниц")
-        # Заготовка для нового списка url, которые будут найдены на текущем url
-        newUrlList = set()
-
         for currentDepth in range(depth):
+            # Заготовка для нового списка url, которые будут найдены на текущем url
+            newUrlList = set()
+            counter = 0
             # Обход каждого url из переданного списка
             for url in urlList.copy():
-                counter = 1
+
                 try:
                     # Текст для красивого отображения
                     print(
-                        "{}/{} Попытка открыть страницу {}".format(counter, len(urlList.copy()), url))
+                        "{} - {}/{} Попытка открыть страницу {}".format(currentDepth + 1, counter + 1, len(urlList.copy()), url))
 
                     # Получение HTML-разметки страницы текущего url
                     htmlDoc = requests.get(url).text
                 except Exception as error:
                     print(error)
                     print("Не удалось открыть страницу")
+                    counter += 1
                     continue
 
                 # Парсирование для работы тегов
@@ -154,7 +154,7 @@ class Crawler:
                 if soup.title != None:
                     soup.title.decompose()
                 listUnwantedItems = ['script', 'style',
-                                     'meta', 'head', 'class', 'span', 'media']
+                                     'meta', 'head', 'class', 'span', 'media', '.apk']
                 for script in soup.find_all(listUnwantedItems):
                     script.decompose()
 
@@ -168,7 +168,7 @@ class Crawler:
                     if ('href' in link.attrs):
                         newUrl = link.attrs['href']
                         # Работа только со ссылками, начинающимися на 'http', отбрасывая якори и пустые
-                        if newUrl[0:4] == 'http' and not self.isIndexed(newUrl):
+                        if newUrl[0:4] == 'http' and not self.isIndexed(newUrl) and newUrl[-4:] != '.apk':
                             print(newUrl)
                             # Добавление ссылки в новый список для обхода
                             newUrlList.add(newUrl)
@@ -177,13 +177,14 @@ class Crawler:
                             print(linkText)
                             # Вставка ссылки с одной страницы на другую
                             self.addLinkRef(url, newUrl, linkText)
-                # Применение изменений в БД
-                self.connection.commit()
-                if (counter % 10 == 0):
-                    self.monitorDB()
                 counter += 1
+                if (counter % 10 == 0):
+                    self.monitorDB(counter)
             # Формирование нового списка для обхода
             urlList = newUrlList
+            self.monitorDB(counter)
+            # Применение изменений в БД
+            self.connection.commit()
 
     # 7. Инициализация таблиц в БД
     def initDB(self):
@@ -272,6 +273,24 @@ class Crawler:
         # print(sqlCreateTable)
         self.cursor.execute(sqlCreateTable)
 
+        # 6. Создание таблицы couterRows
+        # Удаление таблицы, если она уже создана
+        sqlDropTable = "DROP TABLE IF EXISTS counterRows"
+        # print(sqlDropTable)
+        # Выполнение инструкции SQL
+        self.cursor.execute(sqlDropTable)
+
+        # Создание новой таблицы, если такой еще нет
+        sqlCreateTable = """CREATE TABLE IF NOT EXISTS counterRows(
+                          rowId INTEGER PRIMARY KEY AUTOINCREMENT,
+                          wordList INTEGER,
+                          urlList INTEGER,
+                          wordLocation INTEGER,
+                          linkBetweenUrl INTEGER,
+                          linkWords INTEGER);"""
+        # print(sqlCreateTable)
+        self.cursor.execute(sqlCreateTable)
+
         # Применение изменений в БД
         self.connection.commit()
 
@@ -305,35 +324,49 @@ class Crawler:
             return result[0]
 
     # 9. Метод мониторинга
-    def monitorDB(self):
+    def monitorDB(self, counter):
         print("------------------------------------")
         print("9. Мониторинг БД")
+        print("Пройдено {} страниц".format(counter+1))
         # Выбираем все записи в таблице
         sqlSelect = "SELECT * FROM wordList;"
         # print(sqlSelect)
-        result = self.cursor.execute(sqlSelect)
+        sqlExecute = self.cursor.execute(sqlSelect)
+
+        wordListRows = len(sqlExecute.fetchall())
         # В print выводим количество этих записей
-        print("Кол-во записей в wordList: ", len(result.fetchall()))
+        print("Кол-во записей в wordList: ", wordListRows)
 
         sqlSelect = "SELECT * FROM urlList;"
         # print(sqlSelect)
-        result = self.cursor.execute(sqlSelect)
-        print("Кол-во записей в urlList: ", len(result.fetchall()))
+        sqlExecute = self.cursor.execute(sqlSelect)
+        urlListRows = len(sqlExecute.fetchall())
+        print("Кол-во записей в urlList: ", urlListRows)
 
         sqlSelect = "SELECT * FROM wordLocation;"
         # print(sqlSelect)
-        result = self.cursor.execute(sqlSelect)
-        print("Кол-во записей в wordLocation: ", len(result.fetchall()))
-
-        sqlSelect = "SELECT * FROM linkWords;"
-        # print(sqlSelect)
-        result = self.cursor.execute(sqlSelect)
-        print("Кол-во записей в linkWords: ", len(result.fetchall()))
+        sqlExecute = self.cursor.execute(sqlSelect)
+        wordLocationRows = len(sqlExecute.fetchall())
+        print("Кол-во записей в wordLocation: ", wordLocationRows)
 
         sqlSelect = "SELECT * FROM linkBetweenUrl;"
         # print(sqlSelect)
-        result = self.cursor.execute(sqlSelect)
-        print("Кол-во записей в linkBetweenUrl: ", len(result.fetchall()))
+        sqlExecute = self.cursor.execute(sqlSelect)
+        linkBetweenRows = len(sqlExecute.fetchall())
+        print("Кол-во записей в linkBetweenUrl: ", linkBetweenRows)
+
+        sqlSelect = "SELECT * FROM linkWords;"
+        # print(sqlSelect)
+        sqlExecute = self.cursor.execute(sqlSelect)
+        linkWordsRows = len(sqlExecute.fetchall())
+        print("Кол-во записей в linkWords: ", linkWordsRows)
+
+        # Внесение данных в БД для анализа
+        sqlInsert = """INSERT INTO counterRows (wordList, urlList, wordLocation, linkWords, linkBetweenUrl) values ('{}', '{}', '{}', '{}', '{}');""".format(
+            wordListRows, urlListRows, wordLocationRows, linkWordsRows, linkBetweenRows)
+        self.cursor.execute(sqlInsert)
+
+        print("------------------------------------")
 
 
 # Создаем класс и передаем ему имя файла БД
@@ -343,8 +376,8 @@ test.initDB()
 
 # Объявляем список url и добавляем в него ссылки
 urlList = list()
-urlList.append(
-    "http://localhost:5500/1_leguria.html")
+urlList.append("https://ria.ru/20230916/boloto-1895894559.html")
+
 
 # Запускаем паука для обхода страниц
 test.crawl(urlList)
