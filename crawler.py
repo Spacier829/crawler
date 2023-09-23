@@ -92,7 +92,14 @@ class Crawler:
             return False
         else:
             # Строка есть
-            return True
+            sqlSelect = "SELECT rowid FROM wordLocation WHERE fk_urlId = '{}';".format(
+                result)
+            result = self.cursor.execute(sqlSelect).fetchone()
+            self.connection.commit()
+            if result == None:
+                return False
+            else:
+                return True
 
     # 5. Добавление ссылки с одной страницы на другую
     def addLinkRef(self, urlFrom, urlTo, linkText):
@@ -144,7 +151,7 @@ class Crawler:
                 except Exception as error:
                     print(error)
                     print("Не удалось открыть страницу")
-                    counter += 1
+                    # counter += 1
                     continue
 
                 # Парсирование для работы тегов
@@ -327,7 +334,7 @@ class Crawler:
     def monitorDB(self, counter):
         print("------------------------------------")
         print("9. Мониторинг БД")
-        print("Пройдено {} страниц".format(counter+1))
+        print("Пройдено {} страниц".format(counter))
         # Выбираем все записи в таблице
         sqlSelect = "SELECT * FROM wordList;"
         # print(sqlSelect)
@@ -377,6 +384,8 @@ test.initDB()
 # Объявляем список url и добавляем в него ссылки
 urlList = list()
 urlList.append("https://ria.ru/20230916/boloto-1895894559.html")
+# urlList.append("https://ria.ru/20230909/kabachki-1894764175.html")
+# urlList.append("https://ria.ru/20230922/istorii-1898101454.html")
 
 
 # Запускаем паука для обхода страниц
